@@ -2,8 +2,9 @@
 
 Deep Reinforcement Learning for option hedging: a Gymnasium environment that
 simulates delta-hedging a short European call, a PPO agent trained with
-Stable-Baselines3, a Black-Scholes delta-hedge baseline, and a FastAPI
-backend that runs training/backtest jobs and serves results.
+Stable-Baselines3, a Black-Scholes delta-hedge baseline, a FastAPI
+backend that runs training/backtest jobs and serves results, and a
+Next.js dashboard deployed live (see [Live demo](#live-demo)).
 
 ## Approach
 
@@ -22,7 +23,7 @@ The reward and problem formulation follow:
 
 ```mermaid
 flowchart LR
-    FE[Next.js + TypeScript frontend<br/>Vercel] -->|REST /train, /status, /backtest| BE[FastAPI backend<br/>Fly.io]
+    FE[Next.js + TypeScript frontend<br/>Vercel] -->|REST /train, /status, /backtest| BE[FastAPI backend<br/>Render]
     BE --> DB[(SQLite<br/>training_runs, backtest_results)]
     BE --> ML[models/<br/>trained PPO .zip]
     BE --> SIM[HedgingEnv + GBM/GARCH simulators]
@@ -31,11 +32,19 @@ flowchart LR
 ## Frontend
 
 `frontend/` — Next.js 14 (App Router), TypeScript, Tailwind, Recharts.
+Styled as a dark trading terminal: near-black OKLCH palette, Fraunces
+display serif + Geist body/mono, neon green/blue foil accents, terminal
+chrome panels, spotlight cursor, noise texture, staggered entrances
+(designed with the `hallmark` skill, kept in `.agents/skills/`).
 
 - `/` — regime selector (GBM/GARCH) + "start training run" form; POSTs to
-  `/train` and polls `/train/{id}/status`.
+  `/train` and polls `/train/{id}/status` with a live progress bar.
 - `/backtest/[id]` — side-by-side P&L distribution histograms (RL vs BS
   baseline) and a results table from `/backtest/{id}`.
+
+| Training console | Backtest — GBM | Backtest — GARCH |
+|------------------|----------------|------------------|
+| ![Training console](docs/screenshots/home-training.png) | ![GBM backtest](docs/screenshots/backtest-gbm.png) | ![GARCH backtest](docs/screenshots/backtest-garch.png) |
 
 ```bash
 cd frontend
@@ -45,8 +54,13 @@ npm ci && npm run dev
 
 ## Live demo
 
-- Frontend: _pending deployment_
-- Backend API: _pending deployment_
+- Frontend (Vercel): https://frontend-ecru-beta-49.vercel.app
+- Backend API (Render): https://deep-hedging-rl-api.onrender.com —
+  interactive docs at `/docs`
+
+The backend runs on Render's free tier: expect ~60s cold-start on the
+first request after idle, and keep training runs small (the 512MB plan
+limits large PPO jobs — run heavy training locally).
 
 ## Layout
 
