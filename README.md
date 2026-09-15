@@ -18,6 +18,36 @@ The reward and problem formulation follow:
   RL hedging benchmarked against the Black-Scholes delta hedge under
   transaction costs.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    FE[Next.js + TypeScript frontend<br/>Vercel] -->|REST /train, /status, /backtest| BE[FastAPI backend<br/>Fly.io]
+    BE --> DB[(SQLite<br/>training_runs, backtest_results)]
+    BE --> ML[models/<br/>trained PPO .zip]
+    BE --> SIM[HedgingEnv + GBM/GARCH simulators]
+```
+
+## Frontend
+
+`frontend/` — Next.js 14 (App Router), TypeScript, Tailwind, Recharts.
+
+- `/` — regime selector (GBM/GARCH) + "start training run" form; POSTs to
+  `/train` and polls `/train/{id}/status`.
+- `/backtest/[id]` — side-by-side P&L distribution histograms (RL vs BS
+  baseline) and a results table from `/backtest/{id}`.
+
+```bash
+cd frontend
+cp .env.example .env.local   # set NEXT_PUBLIC_API_URL
+npm ci && npm run dev
+```
+
+## Live demo
+
+- Frontend: _pending deployment_
+- Backend API: _pending deployment_
+
 ## Layout
 
 | Path | Contents |
@@ -31,6 +61,7 @@ The reward and problem formulation follow:
 | `backend/main.py` | FastAPI: `POST /train`, `GET /train/{id}/status`, `GET /backtest/{id}` |
 | `db/models.py` | SQLAlchemy models (`TrainingRun`, `BacktestResult`), SQLite |
 | `tests/` | pytest suite (reward, path sanity, put-call parity, API) |
+| `frontend/` | Next.js 14 + TypeScript + Tailwind + Recharts dashboard |
 
 ## Setup
 
