@@ -1,13 +1,30 @@
 # RL-Derivative-Hedging
 
-Deep Reinforcement Learning for option hedging: a Gymnasium environment that
+**Can a reinforcement-learning agent hedge a short option position better than the
+Black-Scholes delta hedge — once transaction costs are real?**
+
+A working deep-hedging pipeline, end to end: a Gymnasium environment that
 simulates delta-hedging a short European call, a PPO agent trained with
-Stable-Baselines3, a Black-Scholes delta-hedge baseline, and a FastAPI
-backend that runs training/backtest jobs and serves results.
+Stable-Baselines3, a Black-Scholes baseline, a FastAPI job server, and a live
+Next.js dashboard — all wired together and deployed.
 
-## Approach
+[![CI](https://github.com/Prad-Nanduri/RL-Derivative-Hedging/actions/workflows/ci.yml/badge.svg)](https://github.com/Prad-Nanduri/RL-Derivative-Hedging/actions/workflows/ci.yml)
+[![Live demo](https://img.shields.io/badge/demo-live-brightgreen)](https://frontend-ecru-beta-49.vercel.app)
 
-The reward and problem formulation follow:
+## Why this project
+
+The Black-Scholes delta hedge is optimal only in a frictionless, continuously
+rebalanced world. Real desks rebalance discretely and pay for every trade —
+exactly the regime where the closed-form hedge loses its guarantees and a
+learned policy can, in principle, do better: trade less often, tolerate more
+inventory risk, and shape its P&L distribution instead of tracking delta.
+
+That is the promise of *deep hedging* — and it is also a claim worth testing,
+not assuming. This repo builds the honest version of the experiment: same
+seeded price paths, same cost model, paired statistics, and a results table
+that reports what the agent actually did rather than what we hoped it would do.
+
+The formulation follows:
 
 - **Buehler, Gonon, Teichmann & Wood (2019)**, "Deep Hedging",
   *Quantitative Finance* 19(8) — hedging as sequential decision-making under
@@ -18,86 +35,113 @@ The reward and problem formulation follow:
   RL hedging benchmarked against the Black-Scholes delta hedge under
   transaction costs.
 
+## Live demo
+
+- **Frontend (Vercel):** https://frontend-ecru-beta-49.vercel.app
+- **Backend API (Render):** https://deep-hedging-rl-api.onrender.com —
+  interactive OpenAPI docs at `/docs`
+
+The backend runs on Render's free tier: expect ~60s cold-start on the first
+request after idle, and keep training runs small (the 512MB plan limits large
+PPO jobs — run heavy training locally).
+
+| Training console | Backtest — GBM | Backtest — GARCH |
+|------------------|----------------|------------------|
+| ![Training console](docs/screenshots/home-training.png) | ![GBM backtest](docs/screenshots/backtest-gbm.png) | ![GARCH backtest](docs/screenshots/backtest-garch.png) |
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-    FE[Next.js + TypeScript frontend<br/>Vercel] -->|REST /train, /status, /backtest| BE[FastAPI backend<br/>Fly.io]
+    FE[Next.js + TypeScript frontend<br/>Vercel] -->|REST /train, /status, /backtest| BE[FastAPI backend<br/>Render]
     BE --> DB[(SQLite<br/>training_runs, backtest_results)]
     BE --> ML[models/<br/>trained PPO .zip]
     BE --> SIM[HedgingEnv + GBM/GARCH simulators]
 ```
 
-## Frontend
+- **`env/hedging_env.py`** — `HedgingEnv(gym.Env)`. Continuous Box observation
+  (spot ratio, time-to-expiry, current hedge position, realized vol) and
+  continuous Box action (hedge-position adjustment, clipped to `[0, 1]` with a
+  per-step adjustment cap). Reward per step:
+  `-(incremental P&L)² - cost_rate · |trade| · S`, the tractable stand-in for
+  the convex-risk-measure objective in Buehler et al. Episode = one option
+  lifetime, settling the call payoff at expiry.
+- **`sim/price_paths.py`** — GBM and GARCH(1,1) (`arch`) path simulators;
+  the GARCH regime makes the market non-Markovian so the baseline's
+  constant-volatility assumption actually hurts.
+- **`pricing/black_scholes.py`** — hand-rolled BS price + delta (unit-tested
+  against put-call parity).
+- **`baseline/delta_hedge.py`** — rebalances to BS delta each step, paying the
+  same proportional cost as the agent.
+- **`training/train_ppo.py`** — PPO (Stable-Baselines3) on `DummyVecEnv`;
+  model → `models/`, TensorBoard → `runs/`.
+- **`evaluation/backtest.py`** — paired seeded paths through both regimes for
+  RL vs baseline, paired t-test + Wilcoxon signed-rank on P&L; writes JSON +
+  markdown table.
+- **`backend/main.py`** — `POST /train` (FastAPI `BackgroundTasks`),
+  `GET /train/{id}/status`, `GET /backtest/{id}`; metadata in SQLite via
+  SQLAlchemy (`db/models.py`).
+- **`frontend/`** — Next.js 14 + TypeScript + Tailwind + Recharts; training
+  console and per-run backtest dashboards.
+- **`tests/`** — pytest: hand-computed reward cases, simulated-path sanity
+  (positivity, terminal moments), BS put-call parity, API schema via
+  `TestClient`.
 
-`frontend/` — Next.js 14 (App Router), TypeScript, Tailwind, Recharts.
+## Run it yourself
 
-- `/` — regime selector (GBM/GARCH) + "start training run" form; POSTs to
-  `/train` and polls `/train/{id}/status`.
-- `/backtest/[id]` — side-by-side P&L distribution histograms (RL vs BS
-  baseline) and a results table from `/backtest/{id}`.
+### Prerequisites
+
+- Python 3.11, Node.js 20+
+- (Recommended) `uv` for the Python env: `pip install uv`
+
+### 1. Backend
+
+```bash
+# from the repo root
+uv venv --python 3.11 .venv
+uv pip install --python .venv/Scripts/python.exe \
+  --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+# (Linux/macOS: .venv/bin/python instead of .venv/Scripts/python.exe)
+
+# run the API
+.venv/Scripts/python.exe -m uvicorn backend.main:app --reload
+```
+
+### 2. Frontend
 
 ```bash
 cd frontend
-cp .env.example .env.local   # set NEXT_PUBLIC_API_URL
-npm ci && npm run dev
+cp .env.example .env.local        # NEXT_PUBLIC_API_URL=http://localhost:8000
+npm ci && npm run dev             # http://localhost:3000
 ```
 
-## Live demo
-
-- Frontend: _pending deployment_
-- Backend API: _pending deployment_
-
-## Layout
-
-| Path | Contents |
-|------|----------|
-| `env/hedging_env.py` | `HedgingEnv(gym.Env)` — continuous Box obs/action, transaction-cost-aware reward |
-| `sim/price_paths.py` | `simulate_gbm`, `simulate_garch` (GARCH(1,1) via `arch`), `fit_garch` |
-| `pricing/black_scholes.py` | Hand-rolled BS call/put price and delta |
-| `baseline/delta_hedge.py` | BS delta-hedge baseline agent |
-| `training/train_ppo.py` | PPO training (DummyVecEnv), model → `models/`, TensorBoard → `runs/` |
-| `evaluation/backtest.py` | Paired backtest over seeded paths, both regimes, t-test + Wilcoxon |
-| `backend/main.py` | FastAPI: `POST /train`, `GET /train/{id}/status`, `GET /backtest/{id}` |
-| `db/models.py` | SQLAlchemy models (`TrainingRun`, `BacktestResult`), SQLite |
-| `tests/` | pytest suite (reward, path sanity, put-call parity, API) |
-| `frontend/` | Next.js 14 + TypeScript + Tailwind + Recharts dashboard |
-
-## Setup
+### 3. Train + backtest directly (no server needed)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-## Train
-
-```bash
-python training/train_ppo.py --timesteps 50000 --regime gbm
+# train a PPO hedging agent on the GBM regime
+.venv/Scripts/python.exe training/train_ppo.py --timesteps 50000 --regime gbm
 tensorboard --logdir runs
+
+# paired backtest, both regimes, seeded paths
+.venv/Scripts/python.exe evaluation/backtest.py --model models/ppo_hedging.zip --n-paths 200
+# → results/backtest_results.json + results/backtest_table.md
 ```
 
-## Backtest
+### 4. API endpoints
 
 ```bash
-python evaluation/backtest.py --model models/ppo_hedging.zip --n-paths 200
-# writes results/backtest_results.json and results/backtest_table.md
-```
-
-## API
-
-```bash
-uvicorn backend.main:app
 curl -X POST localhost:8000/train -H 'Content-Type: application/json' \
   -d '{"regime":"gbm","timesteps":50000,"n_paths_backtest":200}'
-curl localhost:8000/train/1/status
-curl localhost:8000/backtest/1
+# → {"run_id": 1, "status": "queued"}
+
+curl localhost:8000/train/1/status    # {"status": "training", "progress": 0.42, ...}
+curl localhost:8000/backtest/1        # regime → {rl, baseline} stats + pnl_samples
 ```
 
-## Tests
+### 5. Tests
 
 ```bash
-pytest tests -q
+.venv/Scripts/python.exe -m pytest tests -q
 ```
 
 ## Results
@@ -113,11 +157,29 @@ against the Black-Scholes delta hedge on 200 seeded paths per regime
 | GARCH | RL (PPO) | -0.8178 | 4.0000 | 283.81 | 2.8e-19 |
 | GARCH | BS baseline | 0.5100 | 0.5439 | 39.39 | 2.8e-19 |
 
-Honest read: at this training budget the PPO agent does **not** beat the
-delta-hedge baseline — it over-trades (~6-7x the transaction cost) and shows
-higher terminal P&L variance. Longer runs (150k-200k steps) exhibited PPO
+**Honest read:** at this training budget the PPO agent does **not** beat the
+delta-hedge baseline — it over-trades (~6-7× the transaction cost) and shows
+higher terminal P&L variance. Longer runs (150k–200k steps) exhibited PPO
 collapse without hyperparameter tuning (reward rescaling / entropy
-regularization), which is consistent with the instability reported for
-unregularized RL hedging in the literature. Tuning this is future work; the
-pipeline, evaluation harness, and API are the deliverable of this MVP.
+regularization), consistent with the instability reported for unregularized RL
+hedging in the literature. Tuning is future work; the pipeline, evaluation
+harness, and API are the deliverable of this MVP — and the harness is exactly
+what you'd need to close the gap.
 
+## Roadmap
+
+- Reward shaping toward the exponential-utility / CVaR objective in Buehler et
+  al., with entropy regularization to prevent late-run policy collapse
+- Option-aware observations (BS greeks as features) and action parameterization
+  in hedge *units* rather than adjustments
+- Additional simulators (Heston, regime-switching vol) behind the same
+  `price_paths` interface
+- SAC/other off-policy agents through the same `HedgingEnv`
+
+## References
+
+- Buehler, H., Gonon, L., Teichmann, J., & Wood, B. (2019). *Deep hedging*.
+  Quantitative Finance, 19(8), 1271–1291.
+- Kolm, P. N., & Ritter, G. (2019). *Dynamic replication and hedging: A
+  reinforcement learning approach*. Journal of Financial Data Science, 1(1),
+  159–171.

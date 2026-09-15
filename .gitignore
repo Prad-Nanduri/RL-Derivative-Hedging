@@ -7,3 +7,4 @@ db/*.db
 frontend/node_modules/
 frontend/.next/
 frontend/.env.local
+.pytest_cache/
